@@ -1,0 +1,227 @@
+/*Restrict sample to South East and London*/
+/*Note that South East and London are coded as 7 and 8*/
+
+codebook region
+replace region =. if inlist(region, 1,2,3,4,5,6,9)
+replace region = 1 if region == 7
+replace region = 2 if region == 8
+codebook region
+
+label var region "1=London, 2=SE"
+label define region 1 "London" 2 "South East"
+label values region region
+
+/*Balancing the data*/
+xtdes
+bysort pidp: generate T=_N
+keep if T==5
+xtset pidp time
+
+/*Reversing the General Health Questionnaire Score, so that the higher the number the better the health heatlh*/
+gen ghqrev = 36-ghq
+
+/*Formatting Interview Date*/
+gen intdate = dmy(istrtdatd, istrtdatm, istrtdaty)
+format intdat %td
+
+*----*
+
+/*Cleaning the data, categorisation*/
+label define male 0 "female" 1 "male"
+label values male male
+
+replace children = 1 if inlist(children,1,2,3,4,5,6,7,8)
+tab children
+label var children "0 = No Children, 1 = Has Children"
+label define child 0 "no child" 1 "child"
+label values children child
+
+rename educat educ
+replace educ = 5 if inlist(educ,5,9)
+tab educ
+label var educ "1 = Degree, 2 = Post-Grad, 3 = A-Level, 4 = GCSE, 5 = Other or none"
+label define educ 1 "ug" 2 "pg" 3 "a-level" 4 "gcse" 5 "n/a"
+label values educ educ
+
+//Proportion of people who move into the 'next' category in each time period (from T=1 to T=5)
+xttrans educ
+xttab educ
+
+gen jobstatus = jbstat
+replace jobstatus=1 if inlist(jobstatus,1,3,5,6,7,8,9,10,11,12)
+replace jobstatus=. if inlist(jobstatus,13,97)
+replace jobstatus=3 if jobstatus==4
+tab jobstatus
+label var jobstatus "1 = Not paid employment, 2 = Paid employment, 3 = NILF"
+label define jobstatus 1 "unemployed" 2 "employed" 3 "NILF"
+label values jobstatus jobstatus
+
+tab marryst
+replace marryst = 0 if inlist(marryst,1,3,4,5,6,7,8,9,10)
+replace marryst = 1 if marryst==2
+label var marryst "0 = Not Married (other), 1 = Married"
+label define marryst 0 "not married" 1 "married"
+label values marryst marryst
+
+replace race = 0 if inlist(race,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,97)
+tab race
+label var race "0 = Not White, 1 = White"
+label define race 0 "not white" 1 "white"
+label values race race
+
+gen linc = log(nincome)
+
+rename time t
+/*Don't forget to mention how the split between the categories are disproportionate (~85:15 split, so any interpretations made here may not be reflected accurately*/
+
+*----*
+
+
+/*Carrying out Analysis:*/
+
+//If coefficients estimated between RE and FE are very close, just go with the RE model
+//If coefficients aren't close to each other, go with the FE model
+//When we interpret a coefficient from a FE model, you are holding all other variables and individual heterogenetiy constant
+//Within percent indicates how time persistant a variable is
+
+*POLS Model
+reg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3)
+estimates store POLS
+ 
+reg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), vce(cluster pidp)
+estimates store POLS_cluster
+
+esttab POLS POLS_cluster using POLS.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("POLS vs POLS Clustered") obslast mtitles compress
+
+*RE Model
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), re theta
+estimates store RE
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), re vce(cluster pidp) theta
+estimates store RE_cluster
+
+esttab RE RE_cluster using RE.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("RE vs RE Clustered") obslast mtitles compress
+
+*FE Model 1 - Standard
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), fe
+estimates store FE
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), fe vce(cluster pidp)
+estimates store FE_cluster
+
+esttab FE FE_cluster using FE.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("FE vs FE Clustered") obslast mtitles compress
+
+*FE Model 2 - Without time variable
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race if inlist(t,1,2,3), fe
+estimates store FE2
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race if inlist(t,1,2,3), fe vce(cluster pidp)
+estimates store FE2_cluster
+
+*FE Model 3 - Without age variable (but age^2 still included)
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age#c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), fe
+estimates store FE3
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age#c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), fe vce(cluster pidp)
+estimates store FE3_cluster
+
+*---*
+/*Comparison Tables used in paper*/
+*POLS Clustered vs RE vs RE Clustered:
+esttab POLS_cluster RE RE_cluster using POLS_RE.rtf,replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("POLS Clustered vs RE vs RE Clustered") obslast mtitles compress
+
+*RE Clustered vs Standard FE vs FE without t vs FE without age:
+esttab RE_cluster FE_cluster FE2_cluster FE3_cluster using RE_FE.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("RE Clustered vs Standard FE vs FE without t vs FE without age") obslast mtitles compress
+
+*Standard FE vs FE without t vs FE without age:
+esttab FE_cluster FE2_cluster FE3_cluster using FEs.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("Standard FE vs FE without t vs FE without age") obslast mtitles compress
+
+*---*
+/*Bruesch Pagan LM Test - POLS vs RE*/
+*Informal by comparing the coefficients between both models:
+reg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), vce(cluster pidp)
+estimates store POLS_cluster
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), re theta
+estimates store RE
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), re vce(cluster pidp) theta
+estimates store RE_cluster
+
+esttab POLS_cluster RE RE_cluster using POLSvRE, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("POLS Clustered vs RE") obslast mtitles compress
+
+*More formal (Using the BPLM Test):
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age##c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), re vce(cluster pidp) theta
+xttest0
+
+
+*---*
+
+/*Regression-based Hausman Test - RE vs FE*/
+
+*Generating Individual-specific means*
+gen age2 = age^2
+tab educ, gen(education)
+tab jobstatus, gen(jobstat)
+
+bysort pidp: egen mage=mean(age)
+bysort pidp: egen mage2=mean(age^2)
+
+xttab jobstatus if inlist(t,1,2,3)
+bysort pidp: egen mjobstat1=mean(jobstat1)
+bysort pidp: egen mjobstat2=mean(jobstat2)
+bysort pidp: egen mjobstat3=mean(jobstat3)
+
+xttab education if inlist(t,1,2,3)
+bysort pidp: egen meduc1=mean(education1)
+bysort pidp: egen meduc2=mean(education2)
+bysort pidp: egen meduc3=mean(education3)
+bysort pidp: egen meduc4=mean(education4)
+bysort pidp: egen meduc5=mean(education5)
+
+bysort pidp: egen mlinc=mean(linc)
+
+xttab marryst if inlist(t,1,2,3)
+bysort pidp: egen mmarry=mean(marryst)
+
+xttab children if inlist(t,1,2,3)
+bysort pidp: egen mchildren=mean(children)
+
+
+/*Estmating a Correlated Random Effects Model*/
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus age2 i.male i.marryst i.children i.race mlinc meduc1 meduc2 meduc4 meduc5 mjobstat1 mjobstat3 mage mage2 mmarry mchildren t if inlist(t,1,2,3), re vce(cluster pidp)
+
+estimates store CRE 
+
+*The CRE Model should be equivalent to a FE model:
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age#c.age i.male i.marryst i.children i.race t if inlist(t,1,2,3), fe vce(cluster pidp)'
+
+estimates store CREFE
+
+esttab CRE CREFE using CRE_FE.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("CRE vs FE Clustered") obslast mtitles compress
+
+/*Hausman Test*/
+*Without heteroskedasticity and Serial Correlation Robust SEs
+xtreg ghqrev age2 male ib(2).jobstatus linc marryst children ib(3).educ race mage mage2 mjobstat1 mjobstat3 mlinc mmarry mchildren meduc1 meduc2 meduc4 meduc5 t if inlist(t,1,2,3), re 
+
+test mage mage2 mjobstat1 mjobstat3 mlinc mmarry mchildren meduc1 meduc2 meduc4 meduc5
+*p-value < 0.01. Therefore, we prefer to use the FE model
+
+*With heteroskedasticity and Serial Correlation Robust SEs
+
+xtreg ghqrev age2 male ib(2).jobstatus linc marryst children ib(3).educ race mage mage2 mjobstat1 mjobstat3 mlinc mmarry mchildren meduc1 meduc2 meduc4 meduc5 t if inlist(t,1,2,3), re vce(cluster pidp)
+
+test mage mage2 mjobstat1 mjobstat3 mlinc mmarry mchildren meduc1 meduc2 meduc4 meduc5
+*p-value < 0.01. Therefore, we prefer to use the FE model
+
+*----------*
+
+
+
+
+
+
+
+
+
+
