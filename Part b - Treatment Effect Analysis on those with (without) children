@@ -1,0 +1,171 @@
+/*Summative Reponse Part 2 - Using the FE Model*/
+
+/* Cleaning Data
+codebook region
+replace region =. if inlist(region, 1,2,3,4,5,6,9)
+replace region = 1 if region == 7
+replace region = 2 if region == 8
+codebook region
+
+label var region "1=London, 2=SE"
+label define region 1 "London" 2 "South East"
+label values region region
+
+/*Balancing the data*/
+xtdes
+bysort pidp: generate T=_N
+keep if T==5
+xtset pidp time
+
+/*Reversing the General Health Questionnaire Score, so that the higher the number the better the health heatlh*/
+gen ghqrev = 36-ghq
+
+/*Formatting Interview Date*/
+gen intdate = dmy(istrtdatd, istrtdatm, istrtdaty)
+format intdat %td
+
+*----*
+
+/*Cleaning the data, categorisation*/
+label define male 0 "female" 1 "male"
+label values male male
+
+replace children = 1 if inlist(children,1,2,3,4,5,6,7,8)
+tab children
+label var children "0 = No Children, 1 = Has Children"
+label define child 0 "no child" 1 "child"
+label values children child
+
+rename educat educ
+replace educ = 5 if inlist(educ,5,9)
+tab educ
+label var educ "1 = Degree, 2 = Post-Grad, 3 = A-Level, 4 = GCSE, 5 = Other or none"
+label define educ 1 "ug" 2 "pg" 3 "a-level" 4 "gcse" 5 "n/a"
+label values educ educ
+
+//Proportion of people who move into the 'next' category in each time period (from T=1 to T=5)
+xttrans educ
+xttab educ
+
+gen jobstatus = jbstat
+replace jobstatus=1 if inlist(jobstatus,1,3,5,6,7,8,9,10,11,12)
+replace jobstatus=. if inlist(jobstatus,13,97)
+replace jobstatus=3 if jobstatus==4
+tab jobstatus
+label var jobstatus "1 = Not paid employment, 2 = Paid employment, 3 = NILF"
+label define jobstatus 1 "unemployed" 2 "employed" 3 "NILF"
+label values jobstatus jobstatus
+
+tab marryst
+replace marryst = 0 if inlist(marryst,1,3,4,5,6,7,8,9,10)
+replace marryst = 1 if marryst==2
+label var marryst "0 = Not Married (other), 1 = Married"
+label define marryst 0 "not married" 1 "married"
+label values marryst marryst
+
+replace race = 0 if inlist(race,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,97)
+tab race
+label var race "0 = Not White, 1 = White"
+label define race 0 "not white" 1 "white"
+label values race race
+
+gen linc = log(nincome)
+
+rename time t
+*/
+
+xtreg ghqrev linc ib(3).educ ib(2).jobstatus c.age#c.age i.male i.marryst i.children i.race t, fe vce(cluster pidp)
+
+drop if t==1
+drop if t==2
+drop if t==3
+
+replace t=1 if t==4
+replace t=2 if t==5
+
+/*Identifing the treated vs control group*/
+bysort pidp (intdate): replace children = intdate>td(23/03/2020) if _n==2
+bysort pidp (intdate): replace children = children[2] if _n==1
+
+tab children t
+
+reg ghqrev i.children##i.t, vce(cluster pidp)
+
+tab children
+
+ttest ghqrev, by(children) unequal reverse
+/*on average, those who have children have -0.2874496 utility points compared to those who don't have children
+Note: we include the option 'unequal' to control for possible unequal variance of student performance between treatment and control groups (heteroskedasticity)
+*/
+
+*Gives us the same result as above
+reg ghqrev children, vce(robust)
+
+estimates store childaveragereg
+esttab childaveragereg using avg.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("Difference in utility points of those with/without children") obslast mtitles compress
+
+sum age male linc marryst race educ if children==1
+sum age male linc marryst race educ if children==0
+
+*Notice from these summaries that the averages of both categories are very similar. Despite not have generating a positive/negative bias from either category, we must be careful when interpretating the impacts of individuals who have chilren as we only have half the number of observations for them compared to those without children. We should be concious of having sampling bias when interpretating coefficients later.
+
+reg ghqrev children c.age male linc marryst race educ, vce(robust)
+estimates store childaverageregfull
+esttab childaveragereg childaverageregfull using avgfull.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("Difference in utility points of those with/without children") obslast mtitles compress
+*-0.2791538
+
+
+*Treated Group
+mean ghqrev if t==1 & children==1
+mean ghqrev if t==2 & children==1
+di 24.1571 - 25.024
+// = -0.8669
+
+gen D = 0
+replace D = 1 if children==1 & t==2
+
+*FE Model
+xtreg ghqrev D if children==1, fe vce(cluster pidp)
+*-0.8668991 
+
+
+*Control Group
+mean ghqrev if t==1 & children==0
+mean ghqrev if t==2 & children==0
+di 24.77193 - 24.98406
+// = -0.21213
+
+
+*Diff-in-Diff
+di (24.1571 - 25.024) - (24.77193 - 24.98406)
+* Diff-in-Diff = -0.65477
+
+*FE Model
+xtreg ghqrev children##i.t, fe vce(cluster pidp)
+estimates store DiDFE
+*Diff-in-Diff = -0.6547646 
+
+*POLS Model
+reg ghqrev children##i.t, vce(cluster pidp)
+estimates store DiDPOLS
+*Diff-in-Diff = -0.6547646 
+
+
+*FE Model included with explanatory variables
+xtreg ghqrev i.children##i.t linc ib(3).educ c.age#c.age i.male i.marryst i.children i.race, fe vce(cluster pidp)
+estimates store DiDFEfull
+*Diff-in-Diff increases to -0.65117 
+
+*POLS Model included with explanatory variables
+reg ghqrev i.children##i.t linc ib(3).educ c.age#c.age i.male i.marryst i.children i.race, vce(cluster pidp)
+estimates store DiDPOLSfull
+*Diff-in-Diff increases to -0.6395484 
+
+esttab DiDFE DiDPOLS DiDFEfull DiDPOLSfull using DiD.rtf, replace se r2 star(* 0.1 ** 0.05 *** 0.01) title ("Identifying the Difference-in-Difference Coefficient") obslast mtitles compress
+
+
+
+
+
+
+
